@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: fetch
         env: { LOBBY_URL: "${{ vars.LOBBY_URL }}" }
         run: |
