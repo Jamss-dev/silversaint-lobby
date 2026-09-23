@@ -1,0 +1,44 @@
+# Copies the live Silver Saint server list to GitHub Pages every 10 minutes. If Cloudflare
+# is ever down, launchers fall back to this copy (and ping every entry, so stale ones hide).
+name: mirror
+on:
+  schedule: [{ cron: "*/10 * * * *" }]
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency: { group: mirror, cancel-in-progress: false }
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - name: fetch
+        env: { LOBBY_URL: "${{ vars.LOBBY_URL }}" }
+        run: |
+          curl -fsS --max-time 20 "$LOBBY_URL/v1/servers" -o live.json
+          # Only a well-formed list replaces the backup: an error page must never wipe it.
+          python3 - <<'PY'
+          import json, time
+          d = json.load(open("live.json"))
+          assert isinstance(d.get("servers"), list)
+          d["mirroredAt"] = int(time.time())
+          json.dump(d, open("servers.json", "w"), separators=(",", ":"))
+          PY
+          rm live.json
+      - name: publish
+        run: |
+          # Commit only when the server set changed (ignoring timestamps), so history stays small.
+          if git show HEAD:servers.json >/dev/null 2>&1 && python3 -c "
+          import json,subprocess,sys
+          strip=lambda d:[{k:v for k,v in s.items() if k!='seen'} for s in d['servers']]
+          old=json.loads(subprocess.check_output(['git','show','HEAD:servers.json']))
+          new=json.load(open('servers.json'))
+          sys.exit(0 if strip(old)==strip(new) and new['mirroredAt']-old.get('mirroredAt',0)<6*3600 else 1)"; then
+            echo "no change"; exit 0
+          fi
+          git config user.name "silversaint-mirror"
+          git config user.email "silversaint-mirror@users.noreply.github.com"
+          git add servers.json
+          git commit -qm "mirror $(date -u +%FT%TZ)"
+          git push -q
